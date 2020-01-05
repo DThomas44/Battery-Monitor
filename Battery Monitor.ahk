@@ -14,20 +14,16 @@
 SetBatchLines, -1
 
 ;<=====  Script Settings  =====================================================>
-if fileExist(A_ScriptDir . "\settings.ini") {
-    INIRead, debug, % A_ScriptDir . "\settings.ini", BatteryMonitor, debug, false
-    INIRead, notifyUser, % A_ScriptDir . "\settings.ini", BatteryMonitor, notifyUser, true
-    INIRead, useTTS, % A_ScriptDir . "\settings.ini", BatteryMonitor, useTTS, true
-    INIRead, log, % A_ScriptDir . "\settings.ini", BatteryMonitor, log, true
-} else {
-    debug := false
-    notifyUser := true
-    useTTS := true
-    log := true
-}
+INIRead, debug, % A_ScriptDir . "\settings.ini", BatteryMonitor, debug, false
+INIRead, notifyUser, % A_ScriptDir . "\settings.ini", BatteryMonitor, notifyUser, true
+INIRead, useTTS, % A_ScriptDir . "\settings.ini", BatteryMonitor, useTTS, true
+INIRead, log, % A_ScriptDir . "\settings.ini", BatteryMonitor, log, true
+INIRead, lowBatteryPercent, % A_ScriptDir . "\settings.ini", BatteryMonitor, lowBatteryPercent, 25
+INIRead, criticalBatteryPercent, % A_ScriptDir . "\settings.ini", BatteryMonitor, criticalBatteryPercent, 5
+INIRead, TTSVolumeOverride, % A_ScriptDir . "\settings.ini", BatteryMonitor, TTSVolumeOverride, 75
 
 ;<=====  Timers  ==============================================================>
-SetTimer, getStatus, 2000
+SetTimer, getStatus, 10000
 
 ;<=====  Start TTS  ===========================================================>
 tts := ComObjCreate("sapi.SpVoice")
@@ -50,17 +46,6 @@ getStatus:
     batteryLifeTime := ReadInteger(&powerstatus, 4, 4, false)
     batteryFullLifeTime := ReadInteger(&powerstatus, 8, 4, false)
 
-    /*
-    ; Test output
-    output := % "AC Status: " . (acLineStatus?"Charging":"Discharging")
-        . "`nBattery Flag: " . batteryFlag
-        . "`nBattery Life (percent): " . batteryLifePercent
-        . "`nBattery Life (time): " . FormatSeconds(batteryLifeTime)
-        . "`nBattery Life (full time): " . FormatSeconds(batteryFullLifeTime)
-    MsgBox, % output
-    */
-
-    ; Do tests & logging
     ; Log (un)plugged status
     if (acLineStatus != pACLineStatus) {
         ; Logging
@@ -73,7 +58,7 @@ getStatus:
         if acLineStatus {
             pluginTime := A_Now
             pluginRequested := false
-            pluginRequestedCritical := false
+            pluginRequestedCriticalCount := 0
         }
 
         ; Unplugged actions
@@ -95,48 +80,48 @@ getStatus:
         if log {
             Log("Battery fully charged.")
         }
+        if useTTS {
+            SoundSet, % TTSVolumeOverride
+            tts.speak("Battery full")
+        }
         if notifyUser {
             MsgBox, 4144,, % "System fully charged.`n", 30
-        }
-        if useTTS {
-            SoundSet, 75
-            tts.speak("Battery full")
         }
         notifyFullCharge := true
     }
 
     ; Notify of low charge
-    if ((batteryLifePercent < 25) && !acLineStatus && !pluginRequested) {
+    if ((batteryLifePercent < lowBatteryPercent) && !acLineStatus && !pluginRequested) {
         if log {
             Log("Low battery notification sent to user. Battery level: "
                 . batteryLifePercent . "%`n")
         }
-        if notifyUser {
-            MsgBox, 4144,, % "System charge under 25%`nPlease plug in soon.`n"
-                . "Estimated battery time: " . FormatSeconds(batteryLifeTime), 30
-        }
         if useTTS {
-            SoundSet, 75
+            SoundSet, % TTSVolumeOverride
             tts.speak("Battery log, please plug in")
+        }
+        if notifyUser {
+            MsgBox, 4144,, % "System charge under " . lowBatteryPercent . "%`nPlease plug in soon.`n"
+                . "Estimated battery time: " . FormatSeconds(batteryLifeTime), 30
         }
         pluginRequested := true
     }
 
     ; Notify of critical charge
-    if ((batteryLifePercent < 10) && !acLineStatus && !pluginRequestedCritical) {
+    if ((batteryLifePercent < criticalBatteryPercent) && !acLineStatus && !pluginRequestedCritical) {
+        pluginRequestedCriticalCount++
         if log {
             Log("Critical battery notification sent to user. Battery level: "
-                . batteryLifePercent . "%")
-        }
-        if notifyUser {
-            MsgBox, 4112,, % "System charge under 10%`nEstimated battery time remainging: "
-                . FormatSeconds(batteryLifeTime) . " (h:mm:ss)", 30
+                . batteryLifePercent . "% Notification number: " . pluginRequestedCriticalCount)
         }
         if useTTS {
-            SoundSet, 75
+            SoundSet, % TTSVolumeOverride
             tts.speak("Battery critical, please plug in now.")
         }
-        pluginRequestedCritical := true
+        if notifyUser {
+            MsgBox, 4112,, % "System charge under " . criticalBatteryPercent . "%`nEstimated battery time remainging: "
+                . FormatSeconds(batteryLifeTime) . " (h:mm:ss)`nRequest number: " . pluginRequestedCriticalCount, 5
+        }
     }
 
     ; Update Previous Status variables
@@ -172,15 +157,17 @@ LogStart(){
     Return, 1
 }
 
-ReadInteger( p_address, p_offset, p_size, p_hex=true ){
+ReadInteger(p_address, p_offset, p_size, p_hex=true){
     value = 0
     old_FormatInteger := a_FormatInteger
-    if ( p_hex )
-      SetFormat, integer, hex
-    else
-      SetFormat, integer, dec
+    if (p_hex) {
+        SetFormat, integer, hex
+    }
+    else {
+        SetFormat, integer, dec
+    }
     loop, %p_size%
-      value := value+( *( ( p_address+p_offset )+( a_Index-1 ) ) << ( 8* ( a_Index-1 ) ) )
+        value := value+(*((p_address+p_offset)+(a_Index-1)) << (8*(a_Index-1)))
     SetFormat, integer, %old_FormatInteger%
     return, value
 }
